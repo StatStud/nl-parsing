@@ -49,11 +49,6 @@ def cls_pooling(model_output):
     return model_output.last_hidden_state[:, 0]
 
 
-# setting device on GPU if available, else CPU
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device:', device)
-print()
-
 def run_pre_embedd(tokenizer, model):
     '''
     info: 
@@ -80,7 +75,18 @@ def run_pre_embedd(tokenizer, model):
     print("embeddings saved")
 
 
+def regex_entity_extract(sent):
+    options = ["lethargic", "shortness of breath",
+              "headache","hypertension","chest palpitations",
+              "chest pain", "shortness of breath", "throat", 
+              "inflamed"]
+    pattern = r"\b(" + "|".join(map(re.escape, options)) + r")\b"
+    matches = re.findall(pattern, sent)
 
+    if matches:
+        return matches
+    else:
+        return []
 
 def extract_sentences(text):
     return nltk.sent_tokenize(text)
@@ -120,18 +126,17 @@ def srl_extractor(sent, srl):
     pred = srl.predict(sentence=sent)
     return extract_arg1_words(pred)
 
-
-        
+   
 def named_entity_extractor(sentence,nlp):
     target_matcher = nlp.get_pipe("medspacy_target_matcher")
     target_rules = [
-        TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'lethargic'}}]),
+        TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': '\blethargic\b'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'headache'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'headache'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'hypertension'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'chest palpitations'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'chest pain'}}]),
-        TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'shortness of breath'}}]),
+        TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': '\bshortness of breath\b'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'throat'}}]),
         TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'inflamed'}}]),
         TargetRule("consolidation", "EVIDENCE_OF_symptoms"),
@@ -140,35 +145,12 @@ def named_entity_extractor(sentence,nlp):
     target_matcher.add(target_rules)
     docs = nlp(sentence)
     result = list(docs.ents)
-    return [str(x) for x in result]
-        
-def merge_lists(lst1, lst2):
-    result = []
-    for sublst1, sublst2 in zip(lst1, lst2):
-        result.append(sublst1 + sublst2)
-    return result
-
-def string_match(query_lst):
-
-    kgraph_nodes = pd.read_csv(datafile)[['node_name']].values.tolist()
-    kgraph_nodes = [item for sublist in kgraph_nodes for item in sublist]
+    result = [str(x) for x in result]
     
-    result_lst = []
-    for lst in query_lst:
-        output_dict = {}
-        for query in lst:
-            tmp_lst = []
-            for node in kgraph_nodes:
-                fuzzy_score = fuzz.token_set_ratio(query, node) 
-                if fuzzy_score > 70:
-                    #take the inverse of the value to minimize rather than
-                    #maximizing the value 
-                    fuzzy_score = 100-fuzzy_score
-                    tmp_lst.append((node,fuzzy_score))
-            output_dict[query] = tmp_lst
-        result_lst.append(output_dict)
-    return result_lst
-    
+    if result:
+        return result
+    else:
+        return regex_entity_extract(sentence)
     
 def get_embedding_matches(query_lst):
     result_lst = []
@@ -181,41 +163,6 @@ def get_embedding_matches(query_lst):
     return result_lst
 
 
-def combine_scores(string_match, faiss_match, string_weight=0.75, faiss_weight = 0.25):
-    # combine all dictionaries into a single dictionary
-    combined_dict = {}
-    for dict_item in string_match + faiss_match:
-        for key, value in dict_item.items():
-            if key in combined_dict:
-                combined_dict[key].extend(value)
-            else:
-                combined_dict[key] = value
-    
-    # combine tuples with the same string name using a weighted score
-    for key, value in combined_dict.items():
-        string_scores = {}
-        for string, score in value:
-            if string in string_scores:
-                string_scores[string].append(score)
-            else:
-                string_scores[string] = [score]
-        
-        new_value = []
-        for string, scores in string_scores.items():
-            if len(scores) > 1:
-                if string_weight + faiss_weight != 1:
-                    print("WARNING: weights do not add up to 1. Please check weight values")
-                weighted_score = round((string_weight * scores[0]) + (faiss_weight * scores[1]))
-                new_tuple = (string, weighted_score)
-                new_value.append(new_tuple)
-            else:
-                new_value.append((string, scores[0]))
-        
-        combined_dict[key] = new_value
-    
-    return [combined_dict]
-
-
 def flatten_list(lst):
     flatten_lst = []
     for item in lst:
@@ -225,111 +172,44 @@ def flatten_list(lst):
             flatten_lst.append(item)
     return flatten_lst
 
-def filter_best_matches(filtered_data):
+def merge_lists(lst1, lst2):
     result = []
-    for d in filtered_data:
-        new_dict = {}
-        for k, v in d.items():
-            filtered_values = [t for t in v if t[1] < 3]
-            if filtered_values:
-                new_dict[k] = filtered_values
-        result.append(new_dict)
+    for sublst1, sublst2 in zip(lst1, lst2):
+        result.append(sublst1 + sublst2)
     return result
 
-def replace_dicts(lst1, lst2):
-    final = []
-    for i in range(len(lst1)):
-        if lst2[i] != {}:
-            final.append(lst2[i])
-        else:
-            final.append(lst1[i])
-    return final
-
-
-def combine_dicts_lists(dict_lst1, dict_lst2):
-    combined_lst = []
-    for i in range(len(dict_lst1)):
-        combined = {key: dict_lst1[i].get(key, []) + dict_lst2[i].get(key, []) for key in dict_lst1[i].keys()}
-        combined_lst.append(combined)
-    return combined_lst
-
-def print_stirng_faiss_output(test):
-    for i in range(len(test['sent'])):
-        print("***Input Sentence***: ",test['sent'][i])
-        print("*****"*20)
-        print("***ARG1 queries***: ",test['arg1'][i])
-        print("*****"*20)
-        print("***Entity queries***: ",test['entities'][i])
-        print("*****"*20)
-        print("***String Matches***: ",test['string_match'][i])
-        print("*****"*20)
-        print("***FAISS Matches***: ",test['faiss_match'][i])
-        print("*****"*20)
-        print("***RESULTS***: ")
-        for key,value in test['best_results'][i].items():
-            print("query: ", key)
-            print("matches: ", value)
-            print("")
+def print_log(sent_set,arg1_lst,named_entities,faiss_dict):
+    for i in range(len(sent_set)):
+        print("Sentence: ", sent_set[i])
+        print("SRL Match: ",arg1_lst[i])
+        print("Entity Extract Match: ",named_entities[i])
+        print("FAISS Results: ")
+        for k,v in faiss_dict[i].items():
+            print("QUERY: ", k)
+            print("Ranked Results")
+            for ele in v:
+                print(ele)
         print("\n")
-        
-def combine_matches(string_matches, faiss_matches):
-    combined_matches = []
-    
-    for string_match, faiss_match in zip(string_matches, faiss_matches):
-        #each item (string_match and faiss_match) is 
-        # a dictionary where the key is the query and the value is list of tuples
-        combined_match = {}
-        
-        # First check for low score in string_matches
-        for key, value in string_match.items():
-            #for each dictionary from string matches,
-            #the key is the query, value is the **list** of tuples
 
-            #because value is *list* of tuples, loop through the list
-            for tup_ele in value:
-                if tup_ele[1] < 3:
-                    combined_match[key] = value
-
-                
-        # Combine values from both matches for keys not in combined_match
-        for key, value in faiss_match.items():
-            if key in combined_match:
-                continue
-            
-            if key in string_match:
-                combined_value = []
-                for string_tuple, faiss_tuple in zip(string_match[key], faiss_match[key]):
-                    combined_score = 0.25 * string_tuple[1] + 0.75 * faiss_tuple[1]
-                    combined_value.append((string_tuple[0], combined_score))
-                combined_match[key] = combined_value
+def extract_top_strings(list_of_dicts):
+    top_k = 1
+    top_strings = {}
+    for dictionary in list_of_dicts:
+        for key, value in dictionary.items():
+            if key in top_strings:
+                top_strings[key].extend([t[0] for t in value[:top_k]])
             else:
-                combined_match[key] = value
-        
-        # Check for duplicate string names and merge them
-        for key, value in combined_match.items():
-            name_dict = {}
-            for string_tuple in value:
-                if string_tuple[0] in name_dict:
-                    old_score = name_dict[string_tuple[0]][1]
-                    new_score = 0.25 * string_tuple[1] + 0.75 * old_score
-                    name_dict[string_tuple[0]] = (string_tuple[0], new_score)
-                else:
-                    name_dict[string_tuple[0]] = string_tuple
-            combined_match[key] = list(name_dict.values())
-        
-        combined_matches.append(combined_match)
-    
-    return combined_matches
+                top_strings[key] = [t[0] for t in value[:top_k]]
+    merged_list = list(set([s for sublist in top_strings.values() for s in sublist]))
+    return merged_list
 
-
-def run_all(text):
+def run_all(text, show_log = True):
     """
     Link key phrases in the sentences to a set of nodes in the
     knowledge graph.
     """
     sent_set = extract_sentences(text)
     print("here is sent_set:", sent_set)
-    
     
     arg1_lst = []
     named_entities = []
@@ -343,15 +223,13 @@ def run_all(text):
     for sent in sent_set:
         named_entities.append(named_entity_extractor(sent,medspacy_model))
 
-    query_lst = merge_lists(arg1_lst, named_entities)
-    string_matches = string_match(query_lst)
-    #tmp = best_string_matches(string_matches)
-    b_string_matches = filter_best_matches(string_matches)
-    
-    final_string_matches = replace_dicts(string_matches,b_string_matches)
-            
+    query_lst = merge_lists(arg1_lst, named_entities)            
     faiss_dict = get_embedding_matches(query_lst)
     
-    test = combine_matches(final_string_matches,faiss_dict)
+    if show_log:
+        print_log(sent_set,arg1_lst,named_entities,faiss_dict) 
+        
+    #return final list of input entities
+    #for each sentence, get the top 3 FAISS RESULTS
     
-    return test,final_string_matches,faiss_dict,query_lst
+    return extract_top_strings(faiss_dict)
