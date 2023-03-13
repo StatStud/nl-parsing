@@ -10,6 +10,7 @@ linker = entity_linker(embeddings_data="nodes/ddb_embeddings_synonym.pickle",
 
 ### Manually
 
+```python
 text = 
 '''
 A 35-year-old man comes to the physician because of itchy, 
@@ -24,7 +25,7 @@ Examination of the anterior chamber of the eye is unremarkable. Which of the fol
 is the most appropriate treatment?
 '''
 
-```python
+
 linker.run_all(text) 
 ```
 
