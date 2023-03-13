@@ -29,7 +29,10 @@ linker.run_all(text)
 The above returns list of linked entities for this entire context
 
 ### From an external script (.jsonl only, for now)
+
+```python
 linker.save_output(input_data = "data/medqa.jsonl", output_data = "test.jsonl")
+```
 
 The above snippet will create a copy of medqa.jsonl with the included parsed fields,
 and even compute accuracy if ground truth entities are present.
