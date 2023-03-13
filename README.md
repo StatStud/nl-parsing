@@ -1,8 +1,10 @@
 # How to run Entity Linking Algorithm
 
 ## First instantiate the class with desired variables (see code for documentation
+```python
 linker = entity_linker(embeddings_data="nodes/ddb_embeddings_synonym.pickle",
                  datafile = "nodes/ddb_nodes_header.csv")
+```
                  
 ## Then choose a method of parsing
 
