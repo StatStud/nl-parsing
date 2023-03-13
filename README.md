@@ -21,7 +21,12 @@ injection with watery discharge. The pupils are 3 mm, equal, and reactive to lig
 Examination of the anterior chamber of the eye is unremarkable. Which of the following 
 is the most appropriate treatment?
 '''
-linker.run_all(text) --> returns list of linked entities for this entire context
+
+```python
+linker.run_all(text) 
+```
+
+The above returns list of linked entities for this entire context
 
 ### From an external script (.jsonl only, for now)
 linker.save_output(input_data = "data/medqa.jsonl", output_data = "test.jsonl")
