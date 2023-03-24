@@ -1,0 +1,8 @@
+conda install -c conda-forge jsonnet
+allennlp==2.1.0
+allennlp-models==2.1.0
+spacy==3.4.3
+medspacy==1.0.0
+packaging==21.3
+datasets==2.7.1
+scispacy==0.5.1
