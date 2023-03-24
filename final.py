@@ -1,3 +1,25 @@
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
+import medspacy
+from allennlp.predictors.predictor import Predictor
+import spacy
+import re
+from collections import namedtuple 
+import pandas as pd
+from medspacy.ner import TargetRule
+from collections import defaultdict
+from datasets import Dataset
+from transformers import AutoModel, AutoTokenizer
+import time
+import torch
+from scipy.spatial.distance import cosine
+import pickle
+import faiss
+import numpy as np
+import nltk
+import jsonlines
+import json
+
 class entity_linker:
     def __init__(self, embeddings_data="primekg_embeddings_synonym.pickle",
                  datafile = "nodes_full.csv", 
@@ -8,8 +30,9 @@ class entity_linker:
         self.model_name = model_name
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.srl_model_link = "https://storage.googleapis.com/allennlp-public-models/structured-prediction-srl-bert.2020.12.15.tar.gz"
         self.srl_model = Predictor.from_path("https://storage.googleapis.com/allennlp-public-models/structured-prediction-srl-bert.2020.12.15.tar.gz")
-        self.medspacy_model = medspacy.load()
+        self.medspacy_model = spacy.load("en_ner_bc5cdr_md")
         
 
     def run_pre_embedd(self):
@@ -172,7 +195,12 @@ class entity_linker:
         options = ["lethargic", "shortness of breath",
                   "headache","hypertension","chest palpitations",
                   "chest pain", "shortness of breath", "throat", 
-                  "inflamed"]
+                  "inflamed", "interstitial fibrosis", 'aspirin',
+                  "reticulonodular infiltrate","eggshell calcification",
+                  "adenopathies", "lisinopril", "metoprolol","warfarin",
+                  "left atrium", "enlarged left ventricle", "nausea",
+                  'diaphoretic', 'epigastric area','asthma',
+                  'diabetes mellitus', "chronic bronchitis"]
         pattern = r"\b(" + "|".join(map(re.escape, options)) + r")\b"
         matches = re.findall(pattern, sent)
 
@@ -195,14 +223,6 @@ class entity_linker:
         list[Str]
             Description of the return value.
         """
-        target_matcher = self.medspacy_model.get_pipe("medspacy_target_matcher")
-        target_rules = [
-            TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': '\blethargic\b'}}]),
-            TargetRule("symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'headache'}}]),
-            TargetRule("consolidation", "EVIDENCE_OF_symptoms"),
-            TargetRule("EVIDENCE_OF_symptoms", "EVIDENCE_OF_symptoms", pattern=[{'LOWER': {'REGEX': 'infiltrat(e|es|ion)'}}]),
-                  ]
-        target_matcher.add(target_rules)
         docs = self.medspacy_model(sentence)
         result = list(docs.ents)
         result = [str(x) for x in result]
@@ -259,7 +279,7 @@ class entity_linker:
             corresponding scores) that are closest in vector space to query
         """
         
-        top_k = 10
+        top_k = 1
 
         with open(self.embeddings_data, "rb") as f:
             hugging_dataset = pickle.load(f)    
@@ -276,7 +296,7 @@ class entity_linker:
         samples_df = pd.DataFrame.from_dict(samples)
         samples_df["scores"] = scores
         samples_df.sort_values("scores", ascending=True, inplace=True)
-        return samples_df
+        return samples_df[['node_name']]
     
     def get_embedding_matches(self,query_lst):
         """
@@ -301,8 +321,8 @@ class entity_linker:
         for lst in query_lst:
             output_dict = {}
             for query in lst:
-                query_results = self.run_query_faiss(query)[['node_name','scores']].values.tolist()
-                output_dict[query] = [(result[0], result[1]) for result in query_results]
+                query_results = self.run_query_faiss(query).values.tolist()
+                output_dict[query] = [(result[0]) for result in query_results][0]
             result_lst.append(output_dict)
         return result_lst
     
@@ -370,9 +390,74 @@ class entity_linker:
                         f.write(str(ele) + "\n")
                 f.write("\n")
     
+    
+    def print_model_log(self, file_path = "test.jsonl"):
+        """
+        Model Tracking of which algorithms and/or modifications were used, 
+        and their resulting accuracy metrics.
+
+        Parameters:
+        -----------
+
+        Returns:
+        --------
+        model_alter.txt
+            Text file containing all model metrics with performance.
+        """
+        
+        with open('model_alter.txt', 'w') as f:
+            mean_accuracy, median_accuracy, \
+            lowest_accuracy, highest_accuracy, context_count = self.get_accuracy_metrics(file_path)
+            f.write("Model Summary\n"
+                    f"Input Nodes Dataset: {self.datafile}\n"
+                    f"Input Pre-Embedding File: {self.embeddings_data}\n"
+                    f"FAISS Tokenizer: {self.tokenizer}\n"
+                    f"{'*'*20} Query Extractors {'*'*20}\n"
+                    f"SRL Model: {self.srl_model_link}\n"
+                    f"NER Model: MedSpacy + Regex\n"
+                    f"{'*'*20} Node Candidate Extractors {'*'*20}\n"
+                    f"String Matching: NONE\n"
+                    f"Vector Search: FAISS\n"
+                    f"Top K Nodes per Sentence: 1"
+                    f"{'*'*20} Final Accuracy Results {'*'*20}\n"
+                    f"Number of Contexts: {context_count}\n"
+                    f"Average Accuracy: {mean_accuracy}\n"
+                    f"Median Accuracy: {median_accuracy}\n"
+                    f"Lowest Accuracy: {lowest_accuracy}\n"
+                    f"Highest Accuracy: {highest_accuracy}\n")
+
+            
+
+    def get_accuracy_metrics(self, file_path = "test.jsonl"):
+        """
+        Parses through output file and obtains accuracies metrics for
+        all contextes in the file.
+
+        Parameters:
+        -----------
+        file_path : .jsonl file
+            The file containing all the contexts after have been parsed with entity linking
+
+        Returns:
+        --------
+        [mean_accuracy, median_accuracy, lowest_accuracy, highest_accuracy] floats
+            Specific accuracy metrics, as specified by variable name.
+        """
+        with open(file_path) as f:
+            accuracies = []
+            for line in f:
+                data = json.loads(line)
+                accuracies.append(data["accuracy"])
+
+            mean_accuracy = np.mean(accuracies)
+            median_accuracy = np.median(accuracies)
+            lowest_accuracy = min(accuracies)
+            highest_accuracy = max(accuracies)
+
+            return mean_accuracy, median_accuracy, lowest_accuracy, highest_accuracy, len(accuracies)
 #######################################################################
 
-    def run_all(self,text, show_log = True):
+    def predict(self,text, show_log = True):
         """
         The mother of all functions. This is the main
         function used to parse a context sentence.
@@ -405,17 +490,33 @@ class entity_linker:
 
         query_lst = self.merge_lists(arg1_lst, named_entities)            
         faiss_dict = self.get_embedding_matches(query_lst)
+        
+        # remove duplicate faiss keys
+        faiss_dict = remove_duplicate_keys(faiss_dict)
+        
+        #remove default nodes
+        default_nodes = ['all', 'sad', 'old age', 'elderly',
+                        'abt-493', 'surgery complication',
+                        'fits','symptoms and signs']
+        
+        faiss_dict = [{k:v for k,v in d.items() if v not in default_nodes} for d in faiss_dict]
+        
+        
+        #get linked entities
+        linked_entities = get_unique_values(faiss_dict)
+        
+        
 
-        if show_log:
-            self.print_log(sent_set,arg1_lst,named_entities,faiss_dict) 
+#         if show_log:
+#             self.print_log() 
 
         #return final list of input entities
         #for each sentence, get the top 1 FAISS RESULTS
 
-        return self.extract_top_strings(faiss_dict)
+        return faiss_dict,linked_entities
 
 
-    def save_output(self, input_data = "data/medqa.jsonl", output_data = "test.jsonl"):
+    def save_output(self, input_data="data/medqa-ddb-handmap.jsonl", output_data="test.txt"):
         """
         Similar to self.run_all, only instead of manually inputting the 
         context as the argument, the user can instead pass a file containing
@@ -425,27 +526,28 @@ class entity_linker:
         -----------
         input_data : .jsonl file
             The dataset containing all the contexts over which we wish to parse
-        output_data : .jsonl file
+        output_data : .txt file
             A copy of the input_data, but with the added fields after processing.
             Namely: "linked_auto" (the final entity linking list) and "accuracy" 
             (how well "linked_auto" matches to "linked_entities" field)
 
         Returns:
         --------
-        .jsonl file
+        .txt file
             A modified version of the input_data containing the parsing fields
         """
         # Open the JSONL input file and create a new output file
-        with jsonlines.open(input_data) as reader, jsonlines.open(output_data, mode='w') as writer:
+        with jsonlines.open(input_data) as reader, open(output_data, mode='w') as writer:
 
             # Loop through all records in the input file
             for record in reader:
 
                 # Apply the run_all function to the question
-                linked_auto = self.run_all((record['question']))
+                faiss_dict,linked_auto = self.predict((record['question']))
 
                 # Add the linked_auto list to the record as a new field
                 record['linked_auto'] = linked_auto
+                record['query_node_mapping'] = faiss_dict
 
                 # Compare the linked_entities and linked_auto lists and calculate accuracy
                 linked_entities = record['linked_entities']
@@ -456,4 +558,66 @@ class entity_linker:
                 record['accuracy'] = accuracy
 
                 # Write the updated record to the output file
-                writer.write(record)
+                writer.write("question\n")
+                writer.write(record['question'] + "\n")
+                writer.write("linked_entities\n")
+                writer.write(str(record['linked_entities']) + "\n")
+                writer.write("linked_auto\n")
+                writer.write(str(record['linked_auto']) + "\n")
+                writer.write("query_node_mapping\n")
+                writer.write(str(record['query_node_mapping']) + "\n")
+                writer.write("accuracy\n")
+                writer.write(str(record['accuracy']) + "\n\n")
+
+                
+def remove_duplicate_keys(dicts_list):
+    """
+    Removes duplicate keys in a list of dictionaries.
+
+    Args:
+    - dicts_list: a list of dictionaries
+
+    Returns:
+    - a list of dictionaries with duplicate keys removed
+    """
+
+    output_list = []
+    keys_set = set()
+
+    for d in dicts_list:
+        new_dict = {}
+        for k, v in d.items():
+            if k not in keys_set:
+                new_dict[k] = v
+                keys_set.add(k)
+        output_list.append(new_dict)
+
+    return output_list
+
+def get_unique_values(data):
+    unique_values = set()
+    for d in data:
+        for v in d.values():
+            unique_values.add(v)
+    return list(unique_values)
+
+def parse_sentence(sentence):
+    nlp = spacy.load('en_core_web_sm')
+    doc = nlp(sentence)
+    output = []
+    
+    if len(doc) == 3 and doc[1].text == 'and':
+        output.append(doc[0].text)
+        output.append(doc[2].text)
+        return output
+    else:
+        return sentence
+    
+    for i, token in enumerate(doc):
+        if token.pos_ == 'ADJ' and doc[i+1].pos_ == 'NOUN':
+            if doc[i+2].text == 'and':
+                output.append(token.text + ' ' + doc[i+1].text)
+            elif doc[i+2].pos_ == 'ADP' and doc[i+3].pos_ == 'ADJ' and doc[i+4].pos_ == 'NOUN':
+                output.append(token.text + ' ' + doc[i+1].text + ' ' + doc[i+3].text + ' ' + doc[i+4].text)
+    
+    return output
