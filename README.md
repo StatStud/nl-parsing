@@ -26,7 +26,7 @@ is the most appropriate treatment?
 '''
 
 
-linker.run_all(text) 
+linker.predict(text) 
 ```
 
 The above returns list of linked entities for this entire context
