@@ -3,6 +3,10 @@ import csv
 import time
 import re
 
+######################################################
+################ define regex rules ##################
+######################################################
+
 def extract_text_between_br_and_i_tags(html):
     # regex pattern to match text between <br> and <i> tags
     pattern = r"<br>([^<]*?)<i>|<br>([^<]*?)</a>"
@@ -14,8 +18,6 @@ def extract_text_between_br_and_i_tags(html):
     result = [x.strip() for match in matches for x in match if x.strip()]
 
     return result
-
-import re
 
 
 def extract_text_between_br_and_a_tags(html):
@@ -57,7 +59,7 @@ def extract_first_entry(html):
         return extract_text_between_br_and_i_tags(result)
     
 ######################################################
-######################################################
+################ run web scraping ####################
 ######################################################
 
 # Launch the Safari browser
