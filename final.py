@@ -1,6 +1,3 @@
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
-import medspacy
 from allennlp.predictors.predictor import Predictor
 import spacy
 import re
@@ -19,6 +16,7 @@ import numpy as np
 import nltk
 import jsonlines
 import json
+import scispacy
 
 class entity_linker:
     def __init__(self, embeddings_data="primekg_embeddings_synonym.pickle",
