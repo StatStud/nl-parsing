@@ -39,5 +39,11 @@ linker.save_output(input_data = "data/medqa.jsonl", output_data = "test.jsonl")
 
 The above snippet will create a copy of medqa.jsonl with the included parsed fields,
 and even compute accuracy if ground truth entities are present.
+
+# Tips on installing requirements
+
+Both allennlp==2.1.0 allennlp-models==2.1.0 do not like to play with spacy==3.4.3.
+Ignore this warning sign and continue anyway. It's best to first pip install btoh allennlp==2.1.0 allennlp-models==2.1.0, 
+and then later, on another line, install spacy==3.4.3. That's simply how we're able to make this work.
                  
                  
