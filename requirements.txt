@@ -7,3 +7,5 @@ datasets==2.7.1
 scispacy==0.5.1
 faiss-gpu-1.7.2
 jsonlines-3.1.0
+
+python -m spacy download en_core_web_sm
