@@ -3,7 +3,6 @@ import spacy
 import re
 from collections import namedtuple 
 import pandas as pd
-from medspacy.ner import TargetRule
 from collections import defaultdict
 from datasets import Dataset
 from transformers import AutoModel, AutoTokenizer
